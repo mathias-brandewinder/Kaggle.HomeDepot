@@ -44,6 +44,14 @@ type UID = int
 type Query = string
 type SearchResult = Query * UID
 
+type Observation = {
+    Product_uid:UID
+    Search_term:Query
+    ID:int }
+
+type Relevance = float
+type Example = Observation * Relevance
+
 let productDescriptions =
 
     printfn "Extracting product descriptions"
@@ -102,150 +110,249 @@ let brandsInString (s:string) =
     let tokens = s |> wordTokenizer
     Set.intersect brandNames tokens
 
-
-let featurize (query:Query,uid:UID) =
-
-    let q = normalize query
-    let tokens = wordTokenizer q
-
-    let exactMatches =
-        brandNames
-        |> Set.filter (q.Contains)
-        |> Set.count
-
-    //let noMatch = if exactMatches = 0 then 1. else 0.
-    let oneExactMatch = if exactMatches = 1 then 1. else 0.
-    let manyMatches = if exactMatches > 1 then 1. else 0.
-    let queryLength = q.Length |> float
-    let wordsLength = wordTokenizer q |> Set.count |> float
-
-    let brand = brandOf uid
-    let brandMatch =
-        match brand with
-        | None -> 0.
-        | Some(name) ->
-            if q.Contains name then 1. else 0.
-
-    let brandMismatch =
-        match brand with
-        | None -> 0.
-        | Some(name) ->
-            if q.Contains name then 0. else 1.
-
-    [|
-        oneExactMatch
-        manyMatches
-        queryLength
-        brandMatch
-        brandMismatch
-        wordsLength
-    |]
-
-let scale relevance = (relevance - 1.) / 2.
-let descale output = (output * 2.) + 1.
-
 (*
 Training
 *)
 
-#r "Accord/lib/net45/Accord.dll"
-#r "Accord.Math/lib/net45/Accord.Math.dll"
-#r "Accord.Statistics/lib/net45/Accord.Statistics.dll"
+#r @"Charon/lib/Charon.dll"
+open Charon
 
-open Accord.Statistics.Models.Regression
-open Accord.Statistics.Models.Regression.Fitting
+let labels = 
+    "Relevance", 
+    (fun (relevance:float) -> 
+        if relevance < 1.5 then "bad"
+        elif relevance > 2.5 then "good"
+        else "average"
+        |> Some) |> Categorical
 
+(*
+fine-grain labels
+*)
 
-type Features = float[]
-type Label = float
+let fineLabels = 
+    "Relevance", 
+    (fun (relevance:float) -> 
+        if relevance = 1.0 then "bad"
+        elif relevance = 3.0 then "excellent"
+        elif relevance <= 1.5 then "mediocre"
+        elif relevance >= 2.5 then "good"
+        else "average"
+        |> Some) |> Categorical
 
-let train (features:Features[]) (labels:Label []) =
+let wordsInQuery = 
+    "Words", 
+    (fun (o:Observation) -> 
+        o.Search_term 
+        |> wordTokenizer
+        |> Set.count
+        |> fun count ->
+            if count = 1 then "1"
+            elif count = 2 then "2"
+            elif count = 3 then "3"
+            elif count = 4 then "4"
+            elif count = 5 then "5"
+            else "many"
+        |> Some)
+        |> Categorical
 
-    let numberOfFeatures = 6
-    let regression = LogisticRegression(numberOfFeatures)
-    let learner = IterativeReweightedLeastSquares(regression)
+let brandMatch =
+    "Brand match",
+    (fun (o:Observation) -> 
+        let brand = brandOf (o.Product_uid)
+        match brand with
+        | None -> "N/A"
+        | Some(name) ->
+            if (normalize o.Search_term).Contains name 
+            then "match" 
+            else "no match"
+        |> Some)
+        |> Categorical
 
-    let rec refine () =
-        let delta = learner.Run(features, labels)
-        printfn "%.6f" delta
-        if delta < 0.0001
-        then learner
-        else refine ()
+let numberOfAttributes =
+    "Number of attributes",
+    (fun (o:Observation) -> 
+        let attributes = 
+            productAttributes.TryFind (o.Product_uid)
+        match attributes with
+        | None -> "N/A"
+        | Some(attributes) ->
+            let count = attributes.Count
+            if count < 10 then "low"
+            elif count < 20 then "med"
+            else "hi"
+        |> Some)
+        |> Categorical
 
-    let model = refine ()
+let bullet1 = "bullet01"
 
-    // diagnostics
-    model.ComputeError(features,labels) |> printfn "Error: %.3f"
+let firstBulletMatch =
+    "bullet1 match",
+    (fun (o:Observation) -> 
+        let atts = productAttributes.TryFind o.Product_uid
+        match atts with
+        | None -> "No attributes"
+        | Some(atts) ->
+            let b1 = atts.TryFind bullet1
+            match b1 with
+            | None -> "N/A"
+            | Some(bullet) ->
+                let desc = bullet |> wordTokenizer
+                let query = o.Search_term |> wordTokenizer
+                if query.Count < 3 then
+                    if Set.intersect desc query = query
+                    then "match" 
+                    else "no match"
+                else
+                    if ((Set.intersect desc query).Count >= query.Count - 1) 
+                    then "match" 
+                    else "no match"
+        |> Some)
+        |> Categorical
+    
+let descriptionMatch =
+    "description match",
+    (fun (o:Observation) -> 
+        let description = productDescriptions.TryFind o.Product_uid
+        match description with
+        | None -> "No desc"
+        | Some(text) ->
+            let desc = text |> wordTokenizer
+            let query = o.Search_term |> wordTokenizer
+            if query.Count < 3 then
+                if Set.intersect desc query = query
+                then "match" 
+                else "no match"
+            else
+                if ((Set.intersect desc query).Count >= query.Count - 1) 
+                then "match" 
+                else "no match"
+        |> Some)
+        |> Categorical
 
-    [ 0 .. (numberOfFeatures - 1)]
-    |> List.iter (fun i ->
-        printfn "Feat. %i: coeff %.5f sign %b"
-            i
-            regression.Coefficients.[i]
-            (regression.GetWaldTest(i).Significant))
+let kit =
+    "kit",
+    (fun (o:Observation) -> 
+        if (o.Search_term |> normalize).Contains "kit"
+        then "kit"
+        else "no kit"
+        |> Some)
+        |> Categorical
 
-    // return predictor
-    fun (x:Features) -> x |> regression.Compute |> descale
+let features = 
+    [
+        wordsInQuery
+        brandMatch
+        numberOfAttributes
+        firstBulletMatch
+        descriptionMatch
+        kit
+    ]
+
+let data = 
+    Train.GetSample().Rows 
+    |> Seq.map (fun row -> 
+        row.Relevance,
+        {   ID = row.Id
+            Product_uid = row.Product_uid 
+            Search_term = row.Search_term })
+    |> Seq.toArray
+
+(* 
+Experimentations 
+*)
+
+let training = data
+
+let tree = basicTree training (labels,features) { DefaultSettings with Holdout = 0.2 }
+
+tree.Pretty |> printfn "%s"
+
+tree.TrainingQuality
+tree.HoldoutQuality
+
+let forestResults = forest training (labels,features) { DefaultSettings with ForestSize = 20 }
+printfn "OOB quality: %f" forestResults.OutOfBagQuality
 
 (*
 Validation
 *)
 
-let trainingSet = Train.GetSample().Rows |> Seq.toArray
-let size = trainingSet.Length
-
-let features, labels =
-    trainingSet
-    |> Array.map (fun x ->
-        featurize (x.Search_term, x.Product_uid),
-        (float x.Relevance) |> scale)
-    |> Array.unzip
-
-type Quality = float
-
-let rmse (actual:Quality seq) (expected:Quality seq) =
+let rmse (actual:Relevance seq) (expected:Relevance seq) =
     Seq.zip actual expected
     |> Seq.averageBy (fun (act,exp) ->
         let delta = act - exp
         delta * delta)
     |> sqrt
 
-let validate (features:Features[]) (labels:Label []) model =
+let size = training.Length
+let trainSize = size * 3 / 4
 
-    let predicted = features |> Array.map model
-    let actual = labels
+let model = 
+    //basicTree training.[..trainSize] (labels,features) { DefaultSettings with Holdout = 0.0 }
+    forest training.[..trainSize] (fineLabels,features) { DefaultSettings with ForestSize = 20 }
 
-    rmse predicted actual |> printfn "Validation: RMSE %.3f"
+//training 
+//|> Seq.countBy fst 
+//|> Seq.toList 
+//|> List.sortBy fst
 
-let trainSize = trainingSet.Length * 3 / 4
+let numerize output = 
+    if output = "bad" then 1.33 
+    elif output = "good" then 2.67
+    else 2.33
 
-let trainFeatures, testFeatures = features.[..trainSize], features.[trainSize+1..]
-let trainLabels, testLabels = labels.[..trainSize], labels.[trainSize+1..]
+let numerize2 output = 
+        if output = "bad" then 1.0 
+        elif output = "excellent" then 3.0
+        elif output = "mediocre" then 1.67  
+        elif output = "good" then 2.67  
+        else 2.33
 
-train trainFeatures trainLabels
-|> validate testFeatures testLabels
-|> ignore
+let validate model =
+
+    let predicted = 
+        training.[trainSize+1..]
+        |> Array.map (snd >> model >> numerize2)
+    let actual =
+        training.[trainSize+1..]
+        |> Array.map fst
+    rmse predicted actual |> printfn "RMSE: %.2f"
+
+validate (model.Classifier)
 
 (*
 Prepare submission file
 *)
 
+open System.IO
+
+printfn "Training..."
+let fullModel = 
+    forest training (fineLabels,features) { DefaultSettings with ForestSize = 100 }
+
+printfn "Preparing predictions..."
+
 let createSubmission () =
 
-  let testSample = Test.GetSample ()
-  let testSize = testSample.Rows |> Seq.length
+  let testSample = 
+    Test.GetSample().Rows
+    |> Seq.map (fun row -> 
+        {   ID = row.Id
+            Product_uid = row.Product_uid 
+            Search_term = row.Search_term })
 
-  open System.IO
+  let predictor = fullModel.Classifier
 
   let submission =
       [|
           yield "id,relevance"
-          for case in testSample.Rows ->
-              let fs = featurize (case.Search_term, case.Product_uid)
-              let predicted = regression.Compute fs |> denorm
-              sprintf "%i,%.2f" (case.Id) predicted
+          for case in testSample ->
+              let predicted = predictor case |> numerize2
+              sprintf "%i,%.2f" (case.ID) predicted
       |]
 
   let submissionPath = @"C:/Users/Mathias Brandewinder/Desktop/submission.csv"
 
   File.WriteAllLines(submissionPath,submission)
+
+createSubmission ()
