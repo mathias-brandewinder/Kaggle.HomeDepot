@@ -441,6 +441,24 @@ module Features =
                     if titleBigrams |> Array.contains term
                     then acc + 1. else acc) 0.
 
+    let ``Trigrams title match`` : FeatureLearner = 
+        fun sample ->
+            fun obs ->
+                let titleBigrams = 
+                    obs.Product.Title 
+                    |> whiteSpaceTokenizer 
+                    |> Array.map stem 
+                    |> Array.windowed 3
+                let searchBigrams = 
+                    obs.SearchTerm 
+                    |> whiteSpaceTokenizer 
+                    |> Array.map stem 
+                    |> Array.windowed 3
+                searchBigrams
+                |> Seq.fold (fun acc term -> 
+                    if titleBigrams |> Array.contains term
+                    then acc + 1. else acc) 0.
+
     let ``Bayes score`` : FeatureLearner = 
         fun sample ->
             let bayesTokenizer = whiteSpaceTokenizer >> uniques >> Set.map stem

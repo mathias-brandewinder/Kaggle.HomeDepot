@@ -68,8 +68,6 @@
     <None Include="sampleModel.fsx" />
     <Content Include="paket.references" />
     <None Include="champion.fsx" />
-    <None Include="SurfacePatterns.fsx" />
-    <None Include="Bayes.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="Accord.Neuro">

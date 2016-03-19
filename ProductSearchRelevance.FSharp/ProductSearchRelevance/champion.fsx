@@ -2,7 +2,7 @@
 
 open HomeDepot.Model
 open HomeDepot.Features
-open HomeDepot.ModifiedBayes
+//open HomeDepot.ModifiedBayes
 
 #r "alglibnet2/lib/alglibnet2.dll"
 
@@ -42,7 +42,7 @@ let features =
         ``Title contains last search term``                 // 0.455789 - with modified aggressive pre-proc
         ``Product type match``                              // 0.455558
         ``Bigrams title match``
-        ``Bayes score``
+        ``Trigrams title match``    
     |]
 
 let learner (sample:Example[]) =
@@ -89,6 +89,6 @@ let learner (sample:Example[]) =
 
 //evaluate 10 learner
 
-let test = learner trainset
+//let test = learner trainset
 
-//createSubmission learner
+createSubmission learner
