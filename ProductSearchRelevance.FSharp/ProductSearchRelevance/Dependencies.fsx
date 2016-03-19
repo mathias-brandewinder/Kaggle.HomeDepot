@@ -17,4 +17,5 @@ Once this is done, the core dependencies are available in the script.
 #load "Utilities.fs"
 #load "Model.fsi"
 #load "Model.fs"
+#load "ModifiedBayes.fs"
 #load "Features.fs"
