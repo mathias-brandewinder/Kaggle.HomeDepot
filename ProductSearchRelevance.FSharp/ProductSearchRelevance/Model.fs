@@ -52,7 +52,7 @@ module Model =
     [<Literal>]
     let attributesPath = @"../data/attributes.csv"
     [<Literal>]
-    let productsPath =  @"..\data\product_descriptions.csv"
+    let productsPath =  @"../data/product_descriptions.csv"
 
     [<Literal>]
     let submissionPath =  @"../data/"
@@ -66,27 +66,51 @@ module Model =
 
         printfn "Loading product descriptions"
 
-        AllProducts.GetSample().Rows
-        |> PSeq.ordered
-        |> PSeq.map (fun row -> 
-            row.Product_uid, 
-            row.Product_description |> descriptionSentenceBreak |> normalize)
-        |> Seq.timedSlim (Some 10000) Scale.ms
-        |> dict
+        let descCachePath = __SOURCE_DIRECTORY__ + "../../data/descriptions.pre.csv"
+        let rows =
+            if File.Exists descCachePath then
+                printfn "\tLoading cached pre-processed descriptions"
+                AllProducts.Load(descCachePath).Rows
+                |> Seq.map (fun row -> row.Product_uid, row.Product_description)
+            else
+                let normalized =
+                    AllProducts.GetSample().Rows
+                    |> PSeq.ordered
+                    |> PSeq.map (fun row -> 
+                        row.Product_uid, 
+                        row.Product_description |> descriptionSentenceBreak |> normalize)
+                    |> Seq.timedSlim (Some 10000) Scale.ms
+                    |> Seq.cache
+                let rows = normalized |> Seq.map (fun (id,desc) -> sprintf "%d,%s" id (csvEscape desc))
+                writeCsv descCachePath "Product_uid,Product_description" rows
+                normalized
+
+        rows |> dict
 
     let preprocessedAttributes =
 
         printfn "Pre-processing attributes"
 
-        AllAttributes.GetSample().Rows
-        |> PSeq.ordered
-        |> PSeq.map (fun x ->
-            x.Product_uid, 
-            x.Name |> normalize, 
-            x.Value |> normalize)
-        |> Seq.timedSlim (Some 100000) Scale.ms
-        |> Seq.toArray
-        
+        let attrCachePath = __SOURCE_DIRECTORY__ + "../../data/attributes.pre.csv"
+        if File.Exists attrCachePath then
+            printfn "\tLoading cached pre-processed attributes"
+            AllAttributes.Load(attrCachePath).Rows
+            |> Seq.map (fun row -> row.Product_uid, row.Name, row.Value)
+            |> Seq.toArray
+        else
+            let normalized =
+                AllAttributes.GetSample().Rows
+                |> PSeq.ordered
+                |> PSeq.map (fun row -> 
+                    row.Product_uid, 
+                    row.Name |> normalize,
+                    row.Value |> normalize)
+                |> Seq.timedSlim (Some 10000) Scale.ms
+                |> Seq.toArray
+            let rows = normalized |> Seq.map (fun (id,name,value) -> sprintf "%d,%s,%s" id (csvEscape name) (csvEscape value))
+            writeCsv attrCachePath "Product_uid,Name,Value" rows
+            normalized
+
     let attributes =
 
         printfn "Loading attributes"
@@ -123,49 +147,92 @@ module Model =
 
         printfn "Loading train data"
 
-        Train.GetSample().Rows
-        |> Seq.map (fun row ->
-            let description = descriptions.[row.Product_uid]
-            let attributes = attributesFor row.Product_uid
+        let trainCachePath = __SOURCE_DIRECTORY__ + "../../data/train.pre.csv"
+        let rows =
+            if File.Exists trainCachePath then
+                printfn "\tLoading cached pre-processed train data"
+                Train.Load(trainCachePath).Rows
+                |> Seq.map (fun row -> row.Id, row.Product_uid, row.Product_title, row.Search_term, row.Relevance)
+                |> Seq.toArray
+            else
+                let normalized =
+                    Train.GetSample().Rows
+                    |> PSeq.ordered
+                    |> PSeq.map (fun row ->
+                        row.Id,
+                        row.Product_uid, 
+                        row.Product_title |> normalize,
+                        row.Search_term |> normalize |> cleanMisspellings |> cleanSpaces,
+                        row.Relevance)
+                    |> Seq.timedSlim (Some 10000) Scale.ms
+                    |> Seq.toArray
+                let rows = normalized |> Seq.map (fun (id, pid,name,value,score) -> sprintf "%d,%d,%s,%s,%.2f" id pid (csvEscape name) (csvEscape value) score)
+                writeCsv trainCachePath "Id,Product_uid,Product_title,Search_term,Relevance" rows
+                normalized
+
+        rows
+        |> Seq.map (fun (id,pid,title,query,relevance) ->
+            let description = descriptions.[pid]
+            let attributes = attributesFor pid
             let product =
                 {
-                    UID = row.Product_uid
-                    Title = row.Product_title |> normalize
+                    UID = pid
+                    Title = title
                     Description = description
                     Attributes = attributes
                 }
             // Fully constructed example
-            row.Relevance,
+            relevance,
             {
-                ID = row.Id
-                SearchTerm = row.Search_term |> normalize |> cleanMisspellings |> cleanSpaces
+                ID = id
+                SearchTerm = query
                 Product = product
             })
-        |> Seq.timedSlim (Some 10000) Scale.ms
         |> Seq.toArray
 
     let testset =
 
         printfn "Loading test data"
 
-        Test.GetSample().Rows
-        |> Seq.map (fun row ->
-            let description = descriptions.[row.Product_uid]
-            let attributes = attributesFor (row.Product_uid)
+        let testCachePath = __SOURCE_DIRECTORY__ + "../../data/test.pre.csv"
+        let rows =
+            if File.Exists testCachePath then
+                printfn "\tLoading cached pre-processed test data"
+                Test.Load(testCachePath).Rows
+                |> Seq.map (fun row -> row.Id, row.Product_uid, row.Product_title, row.Search_term)
+                |> Seq.toArray
+            else
+                let normalized =
+                    Test.GetSample().Rows
+                    |> PSeq.ordered
+                    |> PSeq.map (fun row ->
+                        row.Id,
+                        row.Product_uid, 
+                        row.Product_title |> normalize,
+                        row.Search_term |> normalize |> cleanMisspellings |> cleanSpaces)
+                    |> Seq.timedSlim (Some 10000) Scale.ms
+                    |> Seq.toArray
+                let rows = normalized |> Seq.map (fun (id,pid,name,value) -> sprintf "%d,%d,%s,%s" id pid (csvEscape name) (csvEscape value))
+                writeCsv testCachePath "Id,Product_uid,Product_title,Search_term" rows
+                normalized
+
+        rows
+        |> Seq.map (fun (id,pid,title,query) ->
+            let description = descriptions.[pid]
+            let attributes = attributesFor pid
             let product =
                 {
-                    UID = row.Product_uid
-                    Title = row.Product_title |> normalize
+                    UID = pid
+                    Title = title
                     Description = description
                     Attributes = attributes
                 }
             // Fully constructed observation
             {
-                ID = row.Id
-                SearchTerm = row.Search_term |> normalize |> cleanMisspellings |> cleanSpaces
+                ID = id
+                SearchTerm = query
                 Product = product
             })
-        |> Seq.timedSlim (Some 10000) Scale.ms
         |> Seq.toArray
 
     let rmse sample =
