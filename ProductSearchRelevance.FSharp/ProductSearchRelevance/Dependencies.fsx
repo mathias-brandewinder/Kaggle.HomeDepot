@@ -12,6 +12,7 @@ Once this is done, the core dependencies are available in the script.
 #r @"StemmersNet/lib/net20/StemmersNet.dll"
 #r @"FSharp.Collections.ParallelSeq/lib/net40/FSharp.Collections.ParallelSeq.dll"
 
+#load "Seq.fs"
 #load "Utilities.fs"
 #load "Model.fsi"
 #load "Model.fs"

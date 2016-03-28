@@ -59,6 +59,7 @@
   </Target>
   -->
   <ItemGroup>
+    <Compile Include="Seq.fs" />
     <Compile Include="Utilities.fs" />
     <Compile Include="Model.fsi" />
     <Compile Include="Model.fs" />

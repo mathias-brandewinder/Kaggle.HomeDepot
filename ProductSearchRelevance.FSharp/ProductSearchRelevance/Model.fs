@@ -4,8 +4,7 @@ module Model =
 
     open System
     open System.IO
-    open System.Text.RegularExpressions
-    open System.Diagnostics
+    open FSharp.Collections.ParallelSeq
 
     open FSharp.Data
 
@@ -68,9 +67,11 @@ module Model =
         printfn "Loading product descriptions"
 
         AllProducts.GetSample().Rows
-        |> Seq.map (fun row -> 
+        |> PSeq.ordered
+        |> PSeq.map (fun row -> 
             row.Product_uid, 
             row.Product_description |> descriptionSentenceBreak |> normalize)
+        |> Seq.timedSlim (Some 10000) Scale.ms
         |> dict
 
     let preprocessedAttributes =
@@ -78,10 +79,12 @@ module Model =
         printfn "Pre-processing attributes"
 
         AllAttributes.GetSample().Rows
-        |> Seq.map (fun x ->
+        |> PSeq.ordered
+        |> PSeq.map (fun x ->
             x.Product_uid, 
             x.Name |> normalize, 
             x.Value |> normalize)
+        |> Seq.timedSlim (Some 100000) Scale.ms
         |> Seq.toArray
         
     let attributes =
@@ -89,7 +92,8 @@ module Model =
         printfn "Loading attributes"
 
         preprocessedAttributes
-        |> Seq.map (fun (id,name,value) -> name,value)
+        |> PSeq.ordered
+        |> PSeq.map (fun (id,name,value) -> name,value)
         |> Seq.groupBy fst
         |> Seq.map (fun (key,values) ->
             key,
@@ -102,15 +106,16 @@ module Model =
 
         preprocessedAttributes
         |> Seq.groupBy (fun (id,name,value) -> id)
-        |> Seq.map (fun (uid,rows) ->
+        |> PSeq.ordered
+        |> PSeq.map (fun (uid,rows) ->
             uid,
             rows
-            |> Seq.map( fun (id,name,value) -> name,value)
+            |> Seq.map(fun (id,name,value) -> name,value)
             |> Map.ofSeq)
         |> dict
 
     let attributesFor (uid:int) =
-        match (productAttributes.TryGetValue uid) with
+        match productAttributes.TryGetValue uid with
         | true,values -> values
         | false,_     -> Map.empty
 
@@ -121,7 +126,7 @@ module Model =
         Train.GetSample().Rows
         |> Seq.map (fun row ->
             let description = descriptions.[row.Product_uid]
-            let attributes = attributesFor (row.Product_uid)
+            let attributes = attributesFor row.Product_uid
             let product =
                 {
                     UID = row.Product_uid
@@ -136,6 +141,7 @@ module Model =
                 SearchTerm = row.Search_term |> normalize |> cleanMisspellings |> cleanSpaces
                 Product = product
             })
+        |> Seq.timedSlim (Some 10000) Scale.ms
         |> Seq.toArray
 
     let testset =
@@ -159,6 +165,7 @@ module Model =
                 SearchTerm = row.Search_term |> normalize |> cleanMisspellings |> cleanSpaces
                 Product = product
             })
+        |> Seq.timedSlim (Some 10000) Scale.ms
         |> Seq.toArray
 
     let rmse sample =
