@@ -70,6 +70,7 @@ module Utilities =
         "btu", @"BTU"
         "yd.", @"yards|yard|yd\.|yd"
         "mm", @"millimeters|millimeter|mm\.|mm\s"
+        "degree", "°"
         ]
 
     let unitsReplacers =
