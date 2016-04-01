@@ -70,6 +70,7 @@ module Utilities =
         "btu", @"BTU"
         "yd.", @"yards|yard|yd\.|yd"
         "mm", @"millimeters|millimeter|mm\.|mm\s"
+        "degree", "°"
         ]
 
     let unitsReplacers =
@@ -536,3 +537,12 @@ module Utilities =
     let standardizeMeasures str =
         let standard = replacers |> List.fold (fun s (p,r) -> p.Replace(s, r)) str
         collapseMeasurement.Replace(standard, "$1$2")
+
+    (*
+    CSV writing
+    *)
+
+    let csvEscape (str:string) = sprintf "\"%s\"" (str.Replace("\"", "\"\""))
+
+    let writeCsv file headers rows =
+        System.IO.File.WriteAllLines(file, Seq.append [headers] rows)
